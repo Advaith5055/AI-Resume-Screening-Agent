@@ -1,0 +1,1 @@
+"""Resume information extractor module."""

@@ -1,0 +1,1 @@
+"""Candidate data model stub."""
