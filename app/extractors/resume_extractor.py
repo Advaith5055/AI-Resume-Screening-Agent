@@ -180,6 +180,11 @@ class RuleBasedResumeExtractor(BaseResumeExtractor):
         re.IGNORECASE,
     )
 
+    YEAR_RANGE_PATTERN = re.compile(
+        r"\b(19\d{2}|20\d{2})\s*[-–—to]+\s*(19\d{2}|20\d{2})\b"
+    )
+    SINGLE_YEAR_PATTERN = re.compile(r"\b(19\d{2}|20\d{2})\b")
+
     def extract_from_text(self, raw_text: str) -> Candidate:
         """Extract candidate information deterministically from raw resume text."""
         if not raw_text or not raw_text.strip():
@@ -282,17 +287,13 @@ class RuleBasedResumeExtractor(BaseResumeExtractor):
         found_skills: Set[str] = set()
 
         if skill_section_lines:
-            # 1. Primary path: Extract explicitly declared skills from the SKILLS section
             skill_section_text = "\n".join(skill_section_lines)
-            
-            # Check canonical skills present in the skills section
             lower_section_text = skill_section_text.lower()
             for alias, canonical in self.CANONICAL_SKILLS.items():
                 pattern = r"(?<!\w)" + re.escape(alias) + r"(?!\w)"
                 if re.search(pattern, lower_section_text):
                     found_skills.add(canonical)
 
-            # Also parse delimited tokens (commas, pipes, bullets) from the skills section
             for line in skill_section_lines:
                 tokens = re.split(r"[,|•·/;\n]+", line)
                 for token in tokens:
@@ -309,10 +310,8 @@ class RuleBasedResumeExtractor(BaseResumeExtractor):
                     ):
                         found_skills.add(cleaned_token.title())
         else:
-            # 2. Fallback path: Only when no SKILLS section is present, perform conservative full-text matching
             lower_full_text = full_text.lower()
             for alias, canonical in self.CANONICAL_SKILLS.items():
-                # Avoid short/ambiguous aliases during full-text fallback
                 if len(alias) < 3 and alias not in {"c++", "c#", "r", "ml", "dl", "ai"}:
                     continue
                 pattern = r"(?<!\w)" + re.escape(alias) + r"(?!\w)"
@@ -343,9 +342,17 @@ class RuleBasedResumeExtractor(BaseResumeExtractor):
                     field_found = field
                     break
 
-            # Search for graduation year
-            year_match = re.search(r"\b(19\d{2}|20\d{2})\b", line)
-            year_found = int(year_match.group(1)) if year_match else None
+            # Search for year range or single year
+            start_year = None
+            end_year = None
+            range_match = self.YEAR_RANGE_PATTERN.search(line)
+            if range_match:
+                start_year = int(range_match.group(1))
+                end_year = int(range_match.group(2))
+            else:
+                single_match = self.SINGLE_YEAR_PATTERN.search(line)
+                if single_match:
+                    end_year = int(single_match.group(1))
 
             # Search for institution
             inst_match = re.search(
@@ -362,15 +369,17 @@ class RuleBasedResumeExtractor(BaseResumeExtractor):
                     degree=degree_found,
                     field_of_study=field_found,
                     institution=institution_found,
-                    end_year=year_found,
+                    start_year=start_year,
+                    end_year=end_year,
                     raw_text=line,
                 )
             elif current_edu:
-                # Supplement missing fields from subsequent lines in the same education block
                 if not current_edu.field_of_study and field_found:
                     current_edu.field_of_study = field_found
-                if not current_edu.end_year and year_found:
-                    current_edu.end_year = year_found
+                if start_year is not None and current_edu.start_year is None:
+                    current_edu.start_year = start_year
+                if end_year is not None and current_edu.end_year is None:
+                    current_edu.end_year = end_year
                 if not current_edu.institution and institution_found:
                     current_edu.institution = institution_found
                 if current_edu.raw_text:
@@ -395,9 +404,23 @@ class RuleBasedResumeExtractor(BaseResumeExtractor):
         for line in lines_to_search:
             date_match = self.DATE_PATTERN.search(line)
             title_found = None
+            inline_company = None
+
             for title_kw in self.JOB_TITLE_KEYWORDS:
                 if re.search(r"\b" + re.escape(title_kw) + r"\b", line, re.IGNORECASE):
-                    title_found = line.split("|")[0].split("-")[0].strip()
+                    # Check if line has title | company format
+                    if "|" in line:
+                        parts = [p.strip() for p in line.split("|")]
+                        title_found = parts[0]
+                        if len(parts) > 1 and not self.DATE_PATTERN.search(parts[1]):
+                            inline_company = parts[1]
+                    elif " at " in line:
+                        parts = line.split(" at ")
+                        title_found = parts[0].strip()
+                        if len(parts) > 1:
+                            inline_company = parts[1].strip()
+                    else:
+                        title_found = line.strip()
                     break
 
             # If this line introduces a NEW title and we already have an active entry with a title, push current
@@ -410,6 +433,7 @@ class RuleBasedResumeExtractor(BaseResumeExtractor):
                 end_d = date_match.group(2).strip() if date_match else None
                 current_exp = Experience(
                     title=title_found,
+                    company=inline_company,
                     start_date=start_d,
                     end_date=end_d,
                     raw_text=line,
@@ -418,14 +442,27 @@ class RuleBasedResumeExtractor(BaseResumeExtractor):
                 # Supplement current entry
                 if not current_exp.title and title_found:
                     current_exp.title = title_found
-                if not current_exp.start_date and date_match:
+                if inline_company and not current_exp.company:
+                    current_exp.company = inline_company
+
+                if date_match:
                     current_exp.start_date = date_match.group(1).strip()
                     current_exp.end_date = date_match.group(2).strip()
-                elif line.startswith(("-", "•", "*")) or not title_found:
+                elif (
+                    current_exp.company is None
+                    and current_exp.start_date is None
+                    and not line.startswith(("-", "•", "*"))
+                    and len(line.split()) <= 7
+                ):
+                    # Intermediate line between title and date is the company name
+                    current_exp.company = line.strip()
+                elif line.startswith(("-", "•", "*")) or current_exp.start_date is not None:
+                    # Description bullet points or details after date
                     if current_exp.description:
-                        current_exp.description += f" {line}"
+                        current_exp.description += f" {line.strip()}"
                     else:
-                        current_exp.description = line
+                        current_exp.description = line.strip()
+
                 if current_exp.raw_text:
                     current_exp.raw_text += f"\n{line}"
 

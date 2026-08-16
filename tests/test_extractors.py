@@ -95,6 +95,7 @@ class TestResumeExtractor:
         assert exp.start_date == "2021"
         assert exp.end_date == "2023"
         assert "Research" in exp.title
+        assert exp.company == "Stanford AI Lab"
 
     def test_missing_email(self, extractor: RuleBasedResumeExtractor):
         """Test resume without email address."""
@@ -155,6 +156,44 @@ class TestResumeExtractor:
         assert "Ph.D." in degrees
         assert "Bachelor's Degree" in degrees
 
+    def test_education_year_range_regression(self, extractor: RuleBasedResumeExtractor):
+        """Regression test for education date ranges (start_year and end_year)."""
+        text = """
+        ADITYA SHARMA
+        EDUCATION
+        B.Tech in Computer Science Engineering
+        ABC Institute of Technology
+        2022 - 2026
+        """
+        candidate = extractor.extract_from_text(text)
+        assert len(candidate.education) == 1
+        edu = candidate.education[0]
+        assert edu.degree == "Bachelor's Degree"
+        assert edu.field_of_study == "Computer Science"
+        assert edu.institution == "ABC Institute of Technology"
+        assert edu.start_year == 2022
+        assert edu.end_year == 2026
+
+    def test_experience_company_structural_heuristic(self, extractor: RuleBasedResumeExtractor):
+        """Regression test for multi-line Title -> Company -> Dates -> Description structure."""
+        text = """
+        EXPERIENCE
+        Software Engineering Intern
+        Tech Solutions Pvt Ltd
+        Jan 2025 - Jun 2025
+        Built REST APIs using Python and FastAPI.
+        Worked with PostgreSQL and Docker.
+        """
+        candidate = extractor.extract_from_text(text)
+        assert len(candidate.experience) == 1
+        exp = candidate.experience[0]
+        assert exp.title == "Software Engineering Intern"
+        assert exp.company == "Tech Solutions Pvt Ltd"
+        assert exp.start_date == "Jan 2025"
+        assert exp.end_date == "Jun 2025"
+        assert "Built REST APIs" in exp.description
+        assert "Tech Solutions Pvt Ltd" not in exp.description
+
     def test_experience_extraction(self, extractor: RuleBasedResumeExtractor):
         """Test extracting structured experience with date ranges and descriptions."""
         text = """
@@ -170,6 +209,7 @@ class TestResumeExtractor:
         assert len(candidate.experience) >= 1
         exp = candidate.experience[0]
         assert "Engineer" in exp.title
+        assert exp.company == "Cyberdyne Systems"
         assert "Jan 2020" in exp.start_date
         assert "Present" in exp.end_date
 
@@ -216,3 +256,22 @@ class TestResumeExtractor:
         assert "PyTorch" in candidate.skills
         assert "Transformers" in candidate.skills
         assert candidate.education[0].degree == "Ph.D."
+
+    def test_sample_resume_file_integration(self):
+        """End-to-end integration test on data/resumes/sample_resume.txt."""
+        sample_path = Path("data/resumes/sample_resume.txt")
+        if sample_path.exists():
+            candidate = extract_resume(sample_path)
+            assert candidate.name == "ADITYA SHARMA"
+            assert candidate.email == "aditya.sharma@email.com"
+            assert candidate.phone == "+91 9876543210"
+            assert "Python" in candidate.skills
+            assert "FastAPI" in candidate.skills
+            assert "PostgreSQL" in candidate.skills
+            assert len(candidate.education) == 1
+            assert candidate.education[0].start_year == 2022
+            assert candidate.education[0].end_year == 2026
+            assert len(candidate.experience) == 1
+            assert candidate.experience[0].company == "Tech Solutions Pvt Ltd"
+            assert candidate.experience[0].start_date == "Jan 2025"
+            assert candidate.experience[0].end_date == "Jun 2025"
