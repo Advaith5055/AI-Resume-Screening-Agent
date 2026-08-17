@@ -142,6 +142,19 @@ python -m app.main --job data/job_descriptions/sample_job_description.txt --resu
 | `--output` / `-o`  | Output directory for CSV and JSON reports           | `outputs`                                           |
 | `--top-n` / `-n`   | Limit output to top N ranked candidates             | All candidates                                      |
 
+### Run Interactive Web Dashboard
+
+```bash
+streamlit run dashboard.py
+```
+
+The web dashboard provides an interactive interface to:
+- Upload custom Job Descriptions (PDF, DOCX, TXT) or paste text directly
+- Upload single or multiple candidate resumes for batch screening
+- View real-time candidate score breakdowns, matched/missing skills, and grounded explanations
+- Filter candidate shortlists by minimum score thresholds
+- Export and download CSV and JSON reports directly from the UI
+
 ### Run Tests
 
 ```bash
@@ -149,6 +162,7 @@ python -m pytest
 ```
 
 Current verified result: **79 tests passing**.
+
 
 ---
 
@@ -207,6 +221,7 @@ ai-resume-screening-agent/
 ├── data/
 │   ├── job_descriptions/      # Target job descriptions
 │   └── resumes/               # Candidate resumes (11 synthetic samples)
+├── dashboard.py               # Streamlit interactive web UI
 ├── tests/                     # 79 automated tests
 ├── outputs/                   # Generated ranking reports (gitignored)
 ├── requirements.txt           # Python dependencies
